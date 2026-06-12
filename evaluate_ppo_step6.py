@@ -21,15 +21,8 @@ def check_required_packages():
     missing = [pip_name for module_name, pip_name in REQUIRED_PACKAGES if importlib.util.find_spec(module_name) is None]
     if not missing:
         return True
-
     for package in missing:
-        if package == "stable-baselines3":
-            print("[ERROR] stable-baselines3 is not installed.", flush=True)
-        elif package == "gymnasium":
-            print("[ERROR] gymnasium is not installed.", flush=True)
-        else:
-            print(f"[ERROR] {package} is not installed.", flush=True)
-
+        print(f"[ERROR] {package} is not installed.", flush=True)
     print("Install with:", flush=True)
     print("python3 -m pip install stable-baselines3 gymnasium", flush=True)
     return False
@@ -40,12 +33,17 @@ def parse_args():
     parser.add_argument("--model", default=str(DEFAULT_MODEL), help="Path to a saved PPO .zip model.")
     parser.add_argument("--steps", type=int, default=100, help="Maximum evaluation steps.")
     parser.add_argument("--episode-max-steps", type=int, default=100, help="Environment episode max steps before truncation.")
-    parser.add_argument("--chaser-start-x", type=float, default=None, help="Requested Chaser reset start global X.")
-    parser.add_argument("--chaser-start-y", type=float, default=None, help="Requested Chaser reset start global Y.")
-    parser.add_argument("--chaser-start-z", type=float, default=-5.0, help="Requested Chaser reset start global Z.")
-    parser.add_argument("--target-start-x", type=float, default=None, help="Requested Target reset start X.")
-    parser.add_argument("--target-start-y", type=float, default=None, help="Requested Target reset start Y.")
-    parser.add_argument("--target-start-z", type=float, default=-5.0, help="Requested Target reset start Z.")
+    parser.add_argument("--target-mode", choices=("simple", "evasive"), default="simple", help="Target behavior mode.")
+    parser.add_argument("--target-base-speed", type=float, default=1.2)
+    parser.add_argument("--target-escape-speed", type=float, default=1.5)
+    parser.add_argument("--target-evade-distance", type=float, default=8.0)
+    parser.add_argument("--target-danger-distance", type=float, default=4.0)
+    parser.add_argument("--chaser-start-x", type=float, default=None)
+    parser.add_argument("--chaser-start-y", type=float, default=None)
+    parser.add_argument("--chaser-start-z", type=float, default=-5.0)
+    parser.add_argument("--target-start-x", type=float, default=None)
+    parser.add_argument("--target-start-y", type=float, default=None)
+    parser.add_argument("--target-start-z", type=float, default=-5.0)
     return parser.parse_args()
 
 
@@ -61,7 +59,6 @@ def main():
         sys.exit(1)
 
     from stable_baselines3 import PPO
-
     from airsim_chase_env import ACTION_NAMES, AirSimChaseEnv
 
     args = parse_args()
@@ -71,8 +68,6 @@ def main():
 
     if not model_path.exists():
         print(f"[ERROR] Model not found: {model_path}", flush=True)
-        print("Run training first:", flush=True)
-        print("python3 train_ppo_step6.py --timesteps 1000", flush=True)
         sys.exit(1)
 
     env = None
@@ -83,27 +78,15 @@ def main():
         print(f"[INFO] model={model_path}", flush=True)
         print(f"[INFO] max_steps={args.steps}", flush=True)
         print(f"[INFO] episode_max_steps={args.episode_max_steps}", flush=True)
-        if args.chaser_start_x is None:
-            print("[INFO] chaser_start_x=None, using settings/default spawn", flush=True)
-        else:
-            print(f"[INFO] chaser_start_x={args.chaser_start_x:.2f}", flush=True)
-        if args.chaser_start_y is None:
-            print("[INFO] chaser_start_y=None, using settings/default spawn", flush=True)
-        else:
-            print(f"[INFO] chaser_start_y={args.chaser_start_y:.2f}", flush=True)
-        print(f"[INFO] chaser_start_z={args.chaser_start_z:.2f}", flush=True)
-        if args.target_start_x is None:
-            print("[INFO] target_start_x=None, using settings/default spawn", flush=True)
-        else:
-            print(f"[INFO] target_start_x={args.target_start_x:.2f}", flush=True)
-        if args.target_start_y is None:
-            print("[INFO] target_start_y=None, using settings/default spawn", flush=True)
-        else:
-            print(f"[INFO] target_start_y={args.target_start_y:.2f}", flush=True)
-        print(f"[INFO] target_start_z={args.target_start_z:.2f}", flush=True)
+        print(f"[INFO] target_mode={args.target_mode}", flush=True)
 
         model = PPO.load(str(model_path), device="cpu")
         env = AirSimChaseEnv(
+            target_mode=args.target_mode,
+            target_base_speed=args.target_base_speed,
+            target_escape_speed=args.target_escape_speed,
+            target_evade_distance=args.target_evade_distance,
+            target_danger_distance=args.target_danger_distance,
             chaser_start_x=args.chaser_start_x,
             chaser_start_y=args.chaser_start_y,
             chaser_start_z=args.chaser_start_z,
@@ -144,12 +127,10 @@ def main():
         print("STEP 6 EVAL PASSED: trained PPO model loaded and ran in AirSim.", flush=True)
 
     except KeyboardInterrupt:
-        print("[WARN] Evaluation interrupted by user. Cleanup will run now.", flush=True)
-        print("STEP 6 EVAL FAILED: interrupted before completion.", flush=True)
+        print("[WARN] Evaluation interrupted by user.", flush=True)
     except Exception as exc:
         print(f"[ERROR] {exc}", flush=True)
         traceback.print_exc()
-        print(f"STEP 6 EVAL FAILED: {exc}", flush=True)
     finally:
         if env is not None:
             env.close()
