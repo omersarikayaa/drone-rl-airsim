@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import math
-
-
 class TargetController:
     def __init__(
         self,
@@ -30,10 +28,8 @@ class TargetController:
         dx = target_pos.x_val - chaser_pos.x_val
         dy = target_pos.y_val - chaser_pos.y_val
         distance = math.sqrt(dx * dx + dy * dy)
-
         if step_count % self.random_maneuver_interval == 0:
             self._side_direction *= -1.0
-
         if distance < self.evade_distance:
             vx, vy = self._escape_velocity(dx, dy, distance)
             if distance < self.danger_distance:
@@ -43,9 +39,8 @@ class TargetController:
         else:
             vx = self.base_speed
             vy = self.base_speed * self.lateral_strength * self._side_direction
-
-        vx, vy = self._apply_obstacle_avoidance(vx, vy, lidar_sectors)
-        vz = self._altitude_correction(target_pos.z_val)
+        vx, vy, vz_obs = self._apply_obstacle_avoidance(vx, vy, lidar_sectors)
+        vz = self._altitude_correction(target_pos.z_val) + vz_obs
         vx, vy, vz = self._limit_velocity(vx, vy, vz, self.escape_speed)
         return vx, vy, vz
 
@@ -61,25 +56,33 @@ class TargetController:
 
     def _apply_obstacle_avoidance(self, vx, vy, lidar_sectors):
         if not lidar_sectors:
-            return vx, vy
-
+            return vx, vy, 0.0
         front = float(lidar_sectors.get("front", 50.0))
-        left = float(lidar_sectors.get("left", 50.0))
+        left  = float(lidar_sectors.get("left",  50.0))
         right = float(lidar_sectors.get("right", 50.0))
+        bottom = float(lidar_sectors.get("bottom", 50.0))
+        vz_obs = 0.0
+
+        # Altta engel varsa yukarı çık
+        if bottom < 3.0:
+            vz_obs = -1.0  # AirSim'de Z ekseni ters, negatif = yukarı
 
         if front >= 3.0:
-            return vx, vy
+            return vx, vy, vz_obs
 
+        # Önde engel var
         vx = min(vx, 0.0)
         if right > left and right > 2.0:
             vy = max(abs(vy), self.base_speed)
         elif left > 2.0:
             vy = -max(abs(vy), self.base_speed)
         else:
-            vx *= 0.25
-            vy *= 0.25
+            # Her iki yan da kapalı — yukarı çık
+            vx *= 0.1
+            vy *= 0.1
+            vz_obs = -1.2  # Güçlü yukarı çıkış
 
-        return vx, vy
+        return vx, vy, vz_obs
 
     def _limit_velocity(self, vx, vy, vz, max_speed):
         speed = math.sqrt(vx * vx + vy * vy + vz * vz)
@@ -90,6 +93,9 @@ class TargetController:
 
     def _altitude_correction(self, target_z):
         error = self.safe_z - target_z
-        if abs(error) < 0.4:
+        if abs(error) < 0.2:
             return 0.0
-        return max(min(error, 0.6), -0.6)
+        # Çok alçaksa güçlü yukarı çıkış
+        if error < -2.0:
+            return -1.5
+        return max(min(error * 1.5, 1.2), -1.2)

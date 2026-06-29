@@ -50,7 +50,9 @@ def run_safety_unit_tests():
             "action": ACTION_FORWARD_TO_TARGET,
             "lidar": {"front": 1.0, "left": 10.0, "right": 10.0},
             "check": lambda result: result["overridden"]
-            and result["safe_action"] in (ACTION_MOVE_RIGHT, ACTION_MOVE_LEFT)
+            and result["safe_action"] == ACTION_FORWARD_TO_TARGET
+            and result.get("diagonal_bypass", False)
+            and result.get("bypass_direction") in ("left", "right")
             and result["risk_level"] == "danger",
         },
         {
@@ -108,17 +110,17 @@ def run_reward_unit_tests():
         {
             "name": "caught",
             "kwargs": {"previous_distance": 3.0, "distance": 1.5, "caught": True},
-            "check": lambda result: result["catch_reward"] == 100.0,
+            "check": lambda result: result["catch_reward"] == 50.0,
         },
         {
             "name": "collision",
             "kwargs": {"previous_distance": 5.0, "distance": 5.0, "collision": True},
-            "check": lambda result: result["collision_penalty"] == -100.0,
+            "check": lambda result: result["collision_penalty"] == -50.0,
         },
         {
             "name": "safety_override",
             "kwargs": {"previous_distance": 5.0, "distance": 5.0, "safety_overridden": True},
-            "check": lambda result: result["safety_override_penalty"] == -0.2,
+            "check": lambda result: result["safety_override_penalty"] == -2.0,
         },
     ]
 

@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument("--model", default=str(DEFAULT_MODEL), help="Path to trained PPO .zip model.")
     parser.add_argument("--steps", type=int, default=100, help="Maximum demo steps.")
     parser.add_argument("--episode-max-steps", type=int, default=100, help="Environment episode max steps before truncation.")
+    parser.add_argument("--obs-mode", choices=("legacy14", "extended26"), default="legacy14", help="Observation mode. Use legacy14 for old ppo_chaser_step6.zip models.")
     parser.add_argument("--target-mode", choices=("simple", "evasive"), default="simple", help="Target behavior mode.")
     parser.add_argument("--target-base-speed", type=float, default=1.2, help="Evasive Target base speed.")
     parser.add_argument("--target-escape-speed", type=float, default=1.5, help="Evasive Target maximum escape speed.")
@@ -148,6 +149,7 @@ def main():
     print(f"[INFO] model={model_path}", flush=True)
     print(f"[INFO] max_steps={args.steps}", flush=True)
     print(f"[INFO] episode_max_steps={args.episode_max_steps}", flush=True)
+    print(f"[INFO] obs_mode={args.obs_mode}", flush=True)
     print(f"[INFO] target_mode={args.target_mode}", flush=True)
     print(
         f"[INFO] target_base_speed={args.target_base_speed:.2f} "
@@ -208,6 +210,7 @@ def main():
             target_start_y=args.target_start_y,
             target_start_z=args.target_start_z,
             max_episode_steps=args.episode_max_steps,
+            obs_mode=args.obs_mode,
         )
         obs, info = env.reset()
         print_reset_info(obs, info)

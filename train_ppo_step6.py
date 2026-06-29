@@ -10,6 +10,19 @@ PROJECT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = PROJECT_DIR / "models"
 LOGS_DIR = PROJECT_DIR / "logs"
 
+INFO_KEYWORDS = (
+    "distance",
+    "caught",
+    "collision",
+    "too_far",
+    "min_lidar",
+    "safety_override",
+    "safety_override_count",
+    "min_lidar_mean",
+    "min_lidar_min",
+    "terminated_reason",
+)
+
 REQUIRED_PACKAGES = (
     ("stable_baselines3", "stable-baselines3"),
     ("gymnasium", "gymnasium"),
@@ -37,11 +50,17 @@ def check_required_packages():
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Step 6 short PPO validation training.")
-    parser.add_argument("--timesteps", type=int, default=5000, help="Total PPO timesteps. Start with 1000 for a quick test.")
-    parser.add_argument("--model-name", default="ppo_chaser_step6", help="Model name saved under models/.")
+    parser = argparse.ArgumentParser(description="PPO Chaser training for AirSimChaseEnv.")
+    parser.add_argument("--timesteps", type=int, default=200000, help="Total PPO timesteps.")
+    parser.add_argument("--model-name", default="ppo_chaser_step7_ext26", help="Model name saved under models/.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for PPO.")
-    parser.add_argument("--episode-max-steps", type=int, default=100, help="Environment episode max steps before truncation.")
+    parser.add_argument("--episode-max-steps", type=int, default=200, help="Environment episode max steps before truncation.")
+    parser.add_argument("--step-duration", type=float, default=0.3, help="AirSim moveByVelocityAsync duration per env step.")
+    parser.add_argument("--chaser-speed", type=float, default=2.0, help="Chaser speed in m/s for discrete actions.")
+    parser.add_argument("--use-fast-reset", action=argparse.BooleanOptionalAction, default=True, help="Use pose-based fast reset after the first full reset.")
+    parser.add_argument("--reward-mode", choices=("simple", "legacy"), default="simple", help="Reward function mode.")
+    parser.add_argument("--obs-mode", choices=("legacy14", "extended26"), default="extended26", help="Observation mode for training.")
+    parser.add_argument("--check-env", action="store_true", help="Run Stable-Baselines3 check_env before training.")
     parser.add_argument("--target-mode", choices=("simple", "evasive"), default="simple", help="Target behavior mode.")
     parser.add_argument("--target-base-speed", type=float, default=1.2, help="Evasive Target base speed.")
     parser.add_argument("--target-escape-speed", type=float, default=1.5, help="Evasive Target maximum escape speed.")
@@ -84,12 +103,32 @@ def main():
             self.print_freq = print_freq
 
         def _on_step(self):
+            infos = self.locals.get("infos", [])
+            info = infos[0] if infos else {}
+            dones = self.locals.get("dones", [])
+
+            if len(dones) > 0 and bool(dones[0]) and "episode" in info:
+                episode_info = info.get("episode", {})
+                print(
+                    "[EPISODE] "
+                    f"timestep={self.num_timesteps} "
+                    f"episode_reward={float(episode_info.get('r', 0.0)):.2f} "
+                    f"episode_length={int(episode_info.get('l', 0))} "
+                    f"final_distance={float(episode_info.get('distance', info.get('distance', 0.0))):.2f} "
+                    f"caught={episode_info.get('caught', info.get('caught', False))} "
+                    f"collision={episode_info.get('collision', info.get('collision', False))} "
+                    f"too_far={episode_info.get('too_far', info.get('too_far', False))} "
+                    f"safety_override_count={int(episode_info.get('safety_override_count', info.get('safety_override_count', 0)))} "
+                    f"min_lidar_min={float(episode_info.get('min_lidar_min', info.get('min_lidar_min', 0.0))):.2f} "
+                    f"min_lidar_mean={float(episode_info.get('min_lidar_mean', info.get('min_lidar_mean', 0.0))):.2f} "
+                    f"reason={episode_info.get('terminated_reason', info.get('terminated_reason', 'none'))}",
+                    flush=True,
+                )
+
             if self.num_timesteps % self.print_freq != 0:
                 return True
 
-            infos = self.locals.get("infos", [])
             rewards = self.locals.get("rewards", [])
-            info = infos[0] if infos else {}
             try:
                 reward = float(rewards[0])
             except Exception:
@@ -99,7 +138,8 @@ def main():
                 f"timestep={self.num_timesteps} "
                 f"reward={reward:.2f} "
                 f"distance={float(info.get('distance', 0.0)):.2f} "
-                f"safety_overridden={info.get('safety_overridden', False)} "
+                f"min_lidar={float(info.get('min_lidar', 0.0)):.2f} "
+                f"safety_override={info.get('safety_override', False)} "
                 f"lidar_front={float(info.get('lidar_front', 0.0)):.2f} "
                 f"collision={info.get('collision', False)} "
                 f"terminated={info.get('terminated', False)}",
@@ -120,11 +160,13 @@ def main():
     model_saved = False
 
     try:
-        print("[STEP6] PPO short validation training", flush=True)
-        print("[INFO] This is not final training. It only validates PPO integration.", flush=True)
+        print("[STEP6] PPO Chaser training", flush=True)
+        print("[INFO] PPO Chaser training with scripted/evasive Target.", flush=True)
         print("[INFO] AirSim training can be slow because the simulator runs in real time.", flush=True)
         print(f"[INFO] timesteps={args.timesteps} seed={args.seed}", flush=True)
         print(f"[INFO] episode_max_steps={args.episode_max_steps}", flush=True)
+        print(f"[INFO] step_duration={args.step_duration:.2f} chaser_speed={args.chaser_speed:.2f}", flush=True)
+        print(f"[INFO] fast_reset={args.use_fast_reset} reward_mode={args.reward_mode} obs_mode={args.obs_mode}", flush=True)
         print(f"[INFO] target_mode={args.target_mode}", flush=True)
         print(
             f"[INFO] target_base_speed={args.target_base_speed:.2f} "
@@ -165,8 +207,19 @@ def main():
             target_start_y=args.target_start_y,
             target_start_z=args.target_start_z,
             max_episode_steps=args.episode_max_steps,
+            use_fast_reset=args.use_fast_reset,
+            step_duration=args.step_duration,
+            chaser_speed=args.chaser_speed,
+            reward_mode=args.reward_mode,
+            obs_mode=args.obs_mode,
         )
-        env = Monitor(env, filename=str(monitor_path))
+        if args.check_env:
+            from stable_baselines3.common.env_checker import check_env
+
+            print("[INFO] Running stable_baselines3 check_env...", flush=True)
+            check_env(env, warn=True)
+
+        env = Monitor(env, filename=str(monitor_path), info_keywords=INFO_KEYWORDS)
 
         checkpoint_callback = CheckpointCallback(
             save_freq=1000,
@@ -191,10 +244,14 @@ def main():
                 verbose=1,
                 tensorboard_log=str(LOGS_DIR / "tensorboard"),
                 seed=args.seed,
-                n_steps=64,
-                batch_size=32,
+                n_steps=512,
+                batch_size=64,
+                n_epochs=10,
                 learning_rate=3e-4,
                 gamma=0.99,
+                gae_lambda=0.95,
+                ent_coef=0.01,
+                clip_range=0.2,
                 device="cpu",
             )
 
@@ -207,6 +264,8 @@ def main():
         model_saved = zip_path.exists()
 
         print(f"[OK] Model saved: {zip_path}", flush=True)
+        print(f"[OK] Monitor log: {monitor_path}", flush=True)
+        print(f"[OK] TensorBoard log dir: {LOGS_DIR / 'tensorboard'}", flush=True)
         print(f"[CHECK] Model exists: {model_saved}", flush=True)
         print(f"[CHECK] Logs dir exists: {LOGS_DIR.exists()}", flush=True)
         monitor_files = list(LOGS_DIR.glob("*monitor*")) + list(LOGS_DIR.glob("*.csv"))
